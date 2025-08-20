@@ -42,11 +42,6 @@ dp = Dispatcher()
 # Разрешённые форматы
 ALLOWED_PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 ALLOWED_VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".mpeg"}
-ALLOWED_PHOTO_MIME = {"image/jpeg", "image/png", "image/webp",
-                      "image/heic", "image/heif"}
-ALLOWED_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/x-msvideo",
-                      "video/x-matroska", "video/x-ms-wmv",
-                      "video/webm", "video/mpeg"}
 
 # Максимальный размер файла
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
@@ -65,11 +60,11 @@ async def on_startup(bot: Bot):
 
 
 # Проверка формата файла
-def is_allowed_file(file_name: str, mime_type: str) -> Optional[str]:
+def is_allowed_file(file_name: str) -> Optional[str]:
     ext = os.path.splitext(file_name.lower())[1]
-    if ext in ALLOWED_PHOTO_EXT or mime_type in ALLOWED_PHOTO_MIME:
+    if ext in ALLOWED_PHOTO_EXT:
         return "photo"
-    if ext in ALLOWED_VIDEO_EXT or mime_type in ALLOWED_VIDEO_MIME:
+    if ext in ALLOWED_VIDEO_EXT:
         return "video"
     return None
 
@@ -118,12 +113,11 @@ async def handle_media(msg: Message):
         file_id = msg.video.file_id
         file_size = msg.video.file_size
     elif msg.document:
-        kind = is_allowed_file(msg.document.file_name, msg.document.mime_type)
+        kind = is_allowed_file(msg.document.file_name)
         if not kind:
             await msg.reply("⚠️ Файл не поддерживается. "
                             "Бот принимает только фото и видео.")
-            logger.warning(f"Отклонён файл: {msg.document.file_name} "
-                           f"({msg.document.mime_type})")
+            logger.warning(f"Отклонён файл: {msg.document.file_name}")
             return
         file_type = kind
         file_id = msg.document.file_id
