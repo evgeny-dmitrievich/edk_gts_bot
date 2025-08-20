@@ -222,7 +222,7 @@ async def handle_unsupported(msg: Message):
     if msg.chat.type != "private":
         return
     if not msg.text or not msg.text.startswith("/"):
-        await msg.reply("⚠️ Бот принимает только фото и видео.")
+        await msg.reply("⚠️ К сожалению бот не умеет читать(😢 ")
         logger.info(f"Неподдерживаемое сообщение от "
                     f"{msg.from_user.full_name} ({msg.from_user.id})")
 
