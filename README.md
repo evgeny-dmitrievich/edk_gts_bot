@@ -12,9 +12,10 @@
   - /start - Запуск бота
 
 ## ⚙️ Запуск и установка в dev-режиме
-```bash
+```
 git clone https://github.com/evgeny-dmitrievich/edk_gts_bot.git
 cd edk_gts_bot
+```
 - Установите и активируйте виртуальное окружение
 python3 -m venv venv
 source venv/bin/activate   # для Linux/Mac
