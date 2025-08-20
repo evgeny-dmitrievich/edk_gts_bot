@@ -34,8 +34,8 @@ pip install -r requirements.txt
 python3 main.py 
 ```
 ### ⚒️ Технологии:
-Python 3.9
-Aiogram 3
+- Python 3.9
+- Aiogram 3
 
 ### ✍ Автор:
 Коваленко Евгений
