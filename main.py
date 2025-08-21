@@ -105,8 +105,8 @@ async def forward_file(bot: Bot, chat_id: int, file_type: str,
                 await bot.send_document(chat_id, file_id, caption=caption)
         return True
     except TelegramRetryAfter as e:
-        logger.warning(f"Флуд-контроль: жду {e.timeout} сек.")
-        await asyncio.sleep(e.timeout)
+        logger.warning(f"Флуд-контроль: жду {e.retry_after} сек.")
+        await asyncio.sleep(e.retry_after)
         return await forward_file(
             bot, chat_id, file_type, file_id, caption, is_document, user)
     except TelegramForbiddenError:
