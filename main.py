@@ -136,13 +136,11 @@ async def handle_media(msg: Message):
     media_group_id = msg.media_group_id or msg.message_id
     if media_group_id not in media_buffer:
         media_buffer[media_group_id] = []
-
     file_type = None
     file_id = None
     file_size = 0
     caption = msg.caption
     is_document = False
-
     if msg.photo:
         file_type = "photo"
         file_id = msg.photo[-1].file_id
@@ -162,7 +160,6 @@ async def handle_media(msg: Message):
         file_id = msg.document.file_id
         file_size = msg.document.file_size
         is_document = True
-
     if file_size > MAX_FILE_SIZE:
         await msg.reply(
             f"❌Файл слишком большой!\n\n"
@@ -172,13 +169,10 @@ async def handle_media(msg: Message):
         logger.warning(
             f"Отклонён большой файл: {file_type}, размер {file_size}")
         return
-
     if file_type and file_id:
         media_buffer[media_group_id].append(
             (file_type, file_id, caption, msg, is_document))
-
     await asyncio.sleep(2)
-
     if media_group_id in media_buffer:
         media_items = media_buffer.pop(media_group_id)
 
@@ -221,7 +215,6 @@ async def handle_media(msg: Message):
                     await msg.bot.send_media_group(CHAT_ID, media=media)
                 except Exception as e:
                     logger.error(f"Ошибка при пересылке альбома: {e}")
-
             await msg.reply(
                 f"✅ Альбом ({len(media_items)} шт.) успешно отправлен!")
             logger.info(f"Альбом ({len(media_items)} шт.) "
