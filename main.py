@@ -21,8 +21,8 @@ if not os.path.exists(LOG_DIR):
 log_file = os.path.join(LOG_DIR, "bot.log")
 file_handler = RotatingFileHandler(
     log_file,
-    maxBytes=10 * 1024 * 1024,  # максимум 10 МБ
-    backupCount=5,              # хранить 5 архивов
+    maxBytes=10 * 1024 * 1024,  # Максимум 10 МБ
+    backupCount=5,             # Храним 5 архивов
     encoding="utf-8"
 )
 
@@ -62,6 +62,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
 MEDIA_GROUP_LIMIT = 10
 
 media_buffer = {}
+album_timers = {}
 
 
 @dp.startup()
@@ -87,11 +88,14 @@ def make_caption(user, base_caption: Optional[str] = None) -> str:
 
 
 # Универсальная отправка файла
-async def forward_file(bot: Bot, chat_id: int, file_type: str,
-                       file_id: str, caption: Optional[str],
+async def forward_file(bot: Bot, chat_id: int,
+                       file_type: str, file_id: str,
+                       caption: Optional[str],
                        is_document: bool, user=None):
     if not caption and user:
         caption = make_caption(user)
+    if caption is not None and not caption.strip():
+        caption += " "  # Telegram не любит пустую подпись
     try:
         if file_type == "photo":
             if not is_document:
@@ -116,6 +120,66 @@ async def forward_file(bot: Bot, chat_id: int, file_type: str,
     except Exception as e:
         logger.error(f"Ошибка при отправке {file_type}: {e}")
     return False
+
+
+# Альбомный таймер
+async def schedule_album_send(media_group_id, msg, delay=5):
+    if media_group_id in album_timers:
+        album_timers[media_group_id].cancel()
+    album_timers[media_group_id] = asyncio.create_task(
+        wait_and_send(media_group_id, msg, delay))
+
+
+async def wait_and_send(media_group_id, msg, delay):
+    await asyncio.sleep(delay)
+    await send_album(media_group_id, msg)
+    album_timers.pop(media_group_id, None)
+
+
+async def send_album(media_group_id, msg):
+    media_items = media_buffer.pop(media_group_id, [])
+    if not media_items:
+        return
+
+    # Разбиваем на чанки по 10 медиа
+    for i in range(0, len(media_items), MEDIA_GROUP_LIMIT):
+        chunk = media_items[i:i + MEDIA_GROUP_LIMIT]
+        media = []
+        for j, (file_type, file_id, caption,
+                msg_item, is_document) in enumerate(chunk):
+            cap = caption or (
+                make_caption(msg_item.from_user)
+                if (not is_document and j == 0) or (
+                    is_document and j == len(chunk) - 1)
+                else None
+            )
+            if cap is not None and not cap.strip():
+                cap += " "
+            if file_type == "photo":
+                media.append(InputMediaPhoto(media=file_id, caption=cap)
+                             if not is_document else
+                             InputMediaDocument(media=file_id, caption=cap))
+            elif file_type == "video":
+                media.append(InputMediaVideo(media=file_id, caption=cap)
+                             if not is_document else
+                             InputMediaDocument(media=file_id, caption=cap))
+        success = False
+        while not success:
+            try:
+                await msg.bot.send_media_group(CHAT_ID, media=media)
+                success = True
+            except TelegramRetryAfter as e:
+                logger.warning(
+                    f"Флуд-контроль (альбом): жду {e.retry_after} сек.")
+                await asyncio.sleep(e.retry_after)
+            except Exception as e:
+                logger.error(f"Ошибка при пересылке альбома: {e}")
+                break
+    await msg.reply(
+        f"✅ Альбом ({len(media_items)} шт.) успешно отправлен!")
+    logger.info(f"Альбом ({len(media_items)} шт.) "
+                f"от {msg.from_user.full_name} "
+                f"({msg.from_user.id}) → {CHAT_ID}")
 
 
 # Команда /start (только приватные чаты)
@@ -182,54 +246,19 @@ async def handle_media(msg: Message):
     if file_type and file_id:
         media_buffer[media_group_id].append(
             (file_type, file_id, caption, msg, is_document))
-    await asyncio.sleep(2)
-    if media_group_id in media_buffer:
-        media_items = media_buffer.pop(media_group_id)
-
+    # Альбом
+    if msg.media_group_id:
+        await schedule_album_send(media_group_id, msg)
+    else:
         # Один файл
-        if len(media_items) == 1:
-            file_type, file_id, caption, msg, is_document = media_items[0]
-            success = await forward_file(
-                msg.bot, CHAT_ID, file_type, file_id,
-                caption, is_document, msg.from_user)
-            if success:
-                await msg.reply("✅ Файл успешно отправлен!")
-
-        # Альбом
-        else:
-            # Разбиваем на чанки по 10 медиа
-            for i in range(0, len(media_items), MEDIA_GROUP_LIMIT):
-                chunk = media_items[i:i + MEDIA_GROUP_LIMIT]
-                media = []
-                for j, (file_type, file_id, caption, msg,
-                        is_document) in enumerate(chunk):
-                    cap = caption or (
-                        make_caption(msg.from_user)
-                        if (not is_document and j == 0) or (
-                            is_document and j == len(chunk) - 1)
-                        else None
-                    )
-                    if file_type == "photo":
-                        media.append(InputMediaPhoto(media=file_id,
-                                                     caption=cap)
-                                     if not is_document
-                                     else InputMediaDocument(media=file_id,
-                                                             caption=cap))
-                    elif file_type == "video":
-                        media.append(InputMediaVideo(media=file_id,
-                                                     caption=cap)
-                                     if not is_document
-                                     else InputMediaDocument(media=file_id,
-                                                             caption=cap))
-                try:
-                    await msg.bot.send_media_group(CHAT_ID, media=media)
-                except Exception as e:
-                    logger.error(f"Ошибка при пересылке альбома: {e}")
-            await msg.reply(
-                f"✅ Альбом ({len(media_items)} шт.) успешно отправлен!")
-            logger.info(f"Альбом ({len(media_items)} шт.) "
-                        f"от {msg.from_user.full_name} "
-                        f"({msg.from_user.id}) → {CHAT_ID}")
+        file_type, file_id, caption, msg, is_document = (
+            media_buffer.pop(media_group_id)[0]
+        )
+        success = await forward_file(
+            msg.bot, CHAT_ID, file_type, file_id,
+            caption, is_document, msg.from_user)
+        if success:
+            await msg.reply("✅ Файл успешно отправлен!")
 
 
 # Неподдерживаемое сообщение
