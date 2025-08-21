@@ -177,7 +177,7 @@ async def handle_media(msg: Message):
         media_buffer[media_group_id].append(
             (file_type, file_id, caption, msg, is_document))
 
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
 
     if media_group_id in media_buffer:
         media_items = media_buffer.pop(media_group_id)
