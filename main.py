@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import Optional
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -17,6 +18,14 @@ if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
 # Логирование
+log_file = os.path.join(LOG_DIR, "bot.log")
+file_handler = RotatingFileHandler(
+    log_file,
+    maxBytes=10 * 1024 * 1024,  # максимум 10 МБ
+    backupCount=5,              # хранить 5 архивов
+    encoding="utf-8"
+)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -27,6 +36,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 # Настройки
 load_dotenv()
