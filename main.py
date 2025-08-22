@@ -170,14 +170,17 @@ async def send_album(chat_id: int, media_group_id, msg: Message):
     for i in range(0, len(items), MEDIA_GROUP_LIMIT):
         chunk = items[i:i + MEDIA_GROUP_LIMIT]
         media = []
-        for j, (file_type, file_id,
-                caption, msg_item, is_document) in enumerate(chunk):
-            cap = caption or (
-                make_caption(msg_item.from_user)
-                if (not is_document and j == 0) or (
-                    is_document and j == len(chunk) - 1)
-                else None
-            )
+        for j, (file_type, file_id, caption,
+                msg_item, is_document) in enumerate(chunk):
+            if caption and caption.strip():
+                cap = make_caption(msg_item.from_user, caption)
+            else:
+                if not is_document and j == 0:
+                    cap = make_caption(msg_item.from_user)
+                elif is_document and j == len(chunk) - 1:
+                    cap = make_caption(msg_item.from_user)
+                else:
+                    cap = None
 
             if file_type == "photo":
                 media.append(InputMediaPhoto(media=file_id, caption=cap)
