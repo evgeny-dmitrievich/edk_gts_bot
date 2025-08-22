@@ -1,12 +1,12 @@
         for j, (file_type, file_id, caption, msg_item, is_document) in enumerate(chunk):
-            if caption:
-                # Пользователь написал подпись — добавляем для всех
-                cap = make_caption(msg_item.from_user, caption)
+            # Определяем подпись
+            if caption and caption.strip():
+                cap = make_caption(msg_item.from_user, caption)  # подпись пользователя всегда
             else:
-                # Подпись для альбома без пользовательской подписи
-                if file_type in ("photo", "video"):
-                    cap = make_caption(msg_item.from_user) if j == 0 else None
-                elif is_document:
-                    cap = make_caption(msg_item.from_user) if j == len(chunk) - 1 else None
+                # дефолтная подпись
+                if not is_document and j == 0:
+                    cap = make_caption(msg_item.from_user)  # первый фото/видео
+                elif is_document and j == len(chunk) - 1:
+                    cap = make_caption(msg_item.from_user)  # последний документ
                 else:
                     cap = None
