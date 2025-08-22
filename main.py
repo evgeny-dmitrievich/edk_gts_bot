@@ -57,7 +57,7 @@ ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".mpeg"}
 
 MEDIA_GROUP_LIMIT = 10
 
-media_buffer = {}  # chat_id: {media_group_id: [(file_type, file_id, caption, msg, is_document)]}
+media_buffer = {}
 album_timers = {}
 
 
@@ -85,10 +85,9 @@ def is_allowed_file(file_name: str) -> Optional[str]:
 
 
 def make_caption(user, user_caption: Optional[str] = None) -> str:
-    base_caption = user_caption.strip() if user_caption and user_caption.strip() else None
-    if base_caption:
-        return f"{base_caption} — от {user.full_name}"
-    return f"🖼️ Фото/Видео от {user.full_name}"
+    if user_caption and user_caption.strip():
+        return f"💬 {user_caption.strip()} - от {user.full_name}"
+    return f"🖼️ Фото/Видео - от {user.full_name}"
 
 
 async def forward_file(bot: Bot, chat_id: int,
@@ -96,7 +95,7 @@ async def forward_file(bot: Bot, chat_id: int,
                        caption: Optional[str],
                        is_document: bool = False,
                        user=None, text_message: Optional[str] = None):
-    # Текст
+    # Текстовое сообщение
     if text_message:
         text_to_send = make_caption(user, text_message)
         try:
@@ -113,17 +112,23 @@ async def forward_file(bot: Bot, chat_id: int,
         try:
             if file_type == "photo":
                 if not is_document:
-                    await bot.send_photo(chat_id, file_id, caption=final_caption)
+                    await bot.send_photo(
+                        chat_id, file_id, caption=final_caption)
                 else:
-                    await bot.send_document(chat_id, file_id, caption=final_caption)
+                    await bot.send_document(
+                        chat_id, file_id, caption=final_caption)
             elif file_type == "video":
                 if not is_document:
-                    await bot.send_video(chat_id, file_id, caption=final_caption)
+                    await bot.send_video(
+                        chat_id, file_id, caption=final_caption)
                 else:
-                    await bot.send_document(chat_id, file_id, caption=final_caption)
+                    await bot.send_document(
+                        chat_id, file_id, caption=final_caption)
             return True
         except TelegramRetryAfter as e:
-            logger.warning(f"Флуд-контроль: жду {e.retry_after} сек. (попытка {attempt+1})")
+            logger.warning(
+                f"Флуд-контроль: жду {e.retry_after} "
+                f"сек. (попытка {attempt+1})")
             await asyncio.sleep(e.retry_after)
         except TelegramForbiddenError:
             logger.error("Бот потерял доступ к чату")
@@ -153,8 +158,9 @@ async def wait_and_send(chat_id: int, media_group_id, msg, delay):
     album_timers[chat_id].pop(media_group_id, None)
 
 
+# Очистка старых альбомов
 async def send_album(chat_id: int, media_group_id, msg: Message):
-    # Очистка старых альбомов
+
     cleanup_old_albums()
 
     items = media_buffer.get(chat_id, {}).pop(media_group_id, [])
@@ -164,18 +170,14 @@ async def send_album(chat_id: int, media_group_id, msg: Message):
     for i in range(0, len(items), MEDIA_GROUP_LIMIT):
         chunk = items[i:i + MEDIA_GROUP_LIMIT]
         media = []
-        for j, (file_type, file_id, caption, msg_item, is_document) in enumerate(chunk):
-            if caption:
-                # Если пользователь написал подпись, добавляем — от пользователя
-                cap = make_caption(msg_item.from_user, caption)
-            else:
-                # Для альбома: подпись на первый фото/видео или на последний документ
-                if file_type in ("photo", "video"):
-                    cap = make_caption(msg_item.from_user) if j == 0 else None
-                elif is_document:
-                    cap = make_caption(msg_item.from_user) if j == len(chunk) - 1 else None
-                else:
-                    cap = None
+        for j, (file_type, file_id,
+                caption, msg_item, is_document) in enumerate(chunk):
+            cap = caption or (
+                make_caption(msg_item.from_user)
+                if (not is_document and j == 0) or (
+                    is_document and j == len(chunk) - 1)
+                else None
+            )
 
             if file_type == "photo":
                 media.append(InputMediaPhoto(media=file_id, caption=cap)
@@ -196,7 +198,9 @@ async def send_album(chat_id: int, media_group_id, msg: Message):
             break
 
     await msg.reply(f"✅ Альбом ({len(items)} шт.) успешно отправлен!")
-    logger.info(f"Альбом ({len(items)} шт.) от {msg.from_user.full_name} ({msg.from_user.id}) → {CHAT_ID}")
+    logger.info(
+        f"Альбом ({len(items)} шт.) от {msg.from_user.full_name} "
+        f"({msg.from_user.id}) → {CHAT_ID}")
 
 
 def cleanup_old_albums(ttl_seconds: int = 120):
@@ -205,9 +209,12 @@ def cleanup_old_albums(ttl_seconds: int = 120):
         for media_group_id, items in list(groups.items()):
             if not items:
                 continue
-            first_msg_time = datetime.fromtimestamp(items[0][3].date.timestamp())
+            first_msg_time = datetime.fromtimestamp(
+                items[0][3].date.timestamp())
             if now - first_msg_time > timedelta(seconds=ttl_seconds):
-                logger.info(f"Очищен старый альбом: chat_id={chat_id}, media_group_id={media_group_id}")
+                logger.info(
+                    f"Очищен старый альбом: chat_id={chat_id}, "
+                    f"media_group_id={media_group_id}")
                 groups.pop(media_group_id, None)
 
 
@@ -216,12 +223,15 @@ async def start_cmd(msg: Message):
     if msg.chat.type != "private":
         return
     await msg.answer(
-        "Бот запущен и готов к работе ✅ 📌 Загрузи фото/видео или напиши короткое сообщение, я отправлю их в чат.")
+        "Бот запущен и готов к работе ✅ 📌 "
+        "Загрузи фото/видео или напиши короткое сообщение, "
+        "я отправлю их в чат.")
 
 
 @dp.message(Command("id"))
 async def chat_id_cmd(msg: Message):
-    await msg.answer(f"chat_id этого чата: <code>{msg.chat.id}</code>", parse_mode="HTML")
+    await msg.answer(
+        f"chat_id этого чата: <code>{msg.chat.id}</code>", parse_mode="HTML")
 
 
 @dp.message(F.photo | F.video | F.document | F.media_group_id | F.text)
@@ -235,7 +245,7 @@ async def handle_media(msg: Message):
             text_message=msg.text
         )
         if success:
-            await msg.reply("✅ Текст успешно отправлен!")
+            await msg.reply("✅ Сообщение успешно отправлено!")
         return
 
     media_group_id = msg.media_group_id or msg.message_id
@@ -262,7 +272,8 @@ async def handle_media(msg: Message):
     elif msg.document:
         kind = is_allowed_file(msg.document.file_name)
         if not kind:
-            await msg.reply("⚠️ Файл не поддерживается. Бот принимает только фото и видео.")
+            await msg.reply("⚠️ Файл не поддерживается. "
+                            "Бот принимает только фото и видео.")
             logger.warning(f"Отклонён файл: {msg.document.file_name}")
             return
         file_type = kind
@@ -278,7 +289,8 @@ async def handle_media(msg: Message):
             f"Размер вашего файла: {file_size / 1024 / 1024:.1f} МБ\n"
             f"Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.0f} МБ"
         )
-        logger.warning(f"Отклонён большой файл: {file_type}, размер {file_size}")
+        logger.warning(
+            f"Отклонён большой файл: {file_type}, размер {file_size}")
         return
 
     media_buffer[chat_id][media_group_id].append(
@@ -292,7 +304,8 @@ async def handle_media(msg: Message):
             media_buffer[chat_id].pop(media_group_id)[0]
         )
         success = await forward_file(
-            msg.bot, CHAT_ID, file_type, file_id, caption, is_document, msg_item.from_user
+            msg.bot, CHAT_ID, file_type,
+            file_id, caption, is_document, msg_item.from_user
         )
         if success:
             await msg.reply("✅ Файл успешно отправлен!")
@@ -304,11 +317,15 @@ async def handle_edit(msg: Message):
         try:
             await msg.bot.send_message(
                 CHAT_ID,
-                f"✏️ (исправлено)\n\n{make_caption(msg.from_user, msg.text)}"
+                f"✏️ (Внес исправления)\n\n"
+                f"{make_caption(msg.from_user, msg.text)}"
             )
-            logger.info(f"Редактированное сообщение от {msg.from_user.full_name} → {CHAT_ID}")
+            logger.info(
+                f"Редактированное сообщение от "
+                f"{msg.from_user.full_name} → {CHAT_ID}")
         except Exception as e:
-            logger.error(f"Ошибка при пересылке редактированного сообщения: {e}")
+            logger.error(
+                f"Ошибка при пересылке редактированного сообщения: {e}")
 
 
 async def main():
