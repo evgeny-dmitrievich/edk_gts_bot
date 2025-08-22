@@ -1,7 +1,6 @@
 import os
 import asyncio
 import logging
-import uuid
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 from datetime import datetime, timedelta
@@ -58,9 +57,8 @@ ALLOWED_VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".mpeg"}
 
 MEDIA_GROUP_LIMIT = 10
 
-# Буфер и таймеры теперь с ключом album_key
-media_buffer: dict[str, list] = {}
-album_timers: dict[str, asyncio.Task] = {}
+media_buffer = {}
+album_timers = {}
 
 
 @dp.startup()
@@ -96,7 +94,8 @@ async def forward_file(bot: Bot, chat_id: int,
                        file_type: Optional[str], file_id: Optional[str],
                        caption: Optional[str],
                        is_document: bool = False,
-                       user=None, text_message: Optional[str] = None):
+                       user=None, text_message: Optional[str] = None,
+                       msg: Optional[Message] = None):
     # Текстовое сообщение
     if text_message:
         text_to_send = make_caption(user, text_message)
@@ -105,6 +104,8 @@ async def forward_file(bot: Bot, chat_id: int,
             return True
         except Exception as e:
             logger.error(f"Ошибка при пересылке текста: {e}")
+            if msg:
+                await msg.reply("❌ Ошибка при пересылке текста. Сообщение не отправлено.")
             return False
 
     final_caption = make_caption(user, caption)
@@ -114,60 +115,72 @@ async def forward_file(bot: Bot, chat_id: int,
         try:
             if file_type == "photo":
                 if not is_document:
-                    await bot.send_photo(chat_id, file_id, caption=final_caption)
+                    await bot.send_photo(
+                        chat_id, file_id, caption=final_caption)
                 else:
-                    await bot.send_document(chat_id, file_id, caption=final_caption)
+                    await bot.send_document(
+                        chat_id, file_id, caption=final_caption)
             elif file_type == "video":
                 if not is_document:
-                    await bot.send_video(chat_id, file_id, caption=final_caption)
+                    await bot.send_video(
+                        chat_id, file_id, caption=final_caption)
                 else:
-                    await bot.send_document(chat_id, file_id, caption=final_caption)
+                    await bot.send_document(
+                        chat_id, file_id, caption=final_caption)
             return True
         except TelegramRetryAfter as e:
             logger.warning(
-                f"Флуд-контроль: жду {e.retry_after} сек. (попытка {attempt+1})")
+                f"Флуд-контроль: жду {e.retry_after} "
+                f"сек. (попытка {attempt+1})")
             await asyncio.sleep(e.retry_after)
         except TelegramForbiddenError:
             logger.error("Бот потерял доступ к чату")
-            break
+            if msg:
+                await msg.reply("❌ Бот потерял доступ к целевому чату. Отправка невозможна.")
+            return False
         except TelegramBadRequest as e:
             logger.error(f"Неверный запрос Telegram: {e}")
-            break
+            if msg:
+                await msg.reply("❌ Ошибка при отправке. Возможно, файл повреждён или формат не поддерживается.")
+            return False
         except Exception as e:
             logger.error(f"Ошибка при отправке {file_type}: {e}")
-            break
+            if msg:
+                await msg.reply("❌ Ошибка при пересылке. Сообщение не отправлено.")
+            return False
     return False
 
 
-# Генерация уникального ключа для альбома
-def make_album_key(chat_id: int, media_group_id: Optional[int], msg_id: int) -> str:
-    mg_id = media_group_id or msg_id
-    return f"{chat_id}_{mg_id}_{uuid.uuid4().hex}"
+async def schedule_album_send(chat_id: int, media_group_id, msg, delay=5):
+    if chat_id not in album_timers:
+        album_timers[chat_id] = {}
+    if media_group_id in album_timers[chat_id]:
+        album_timers[chat_id][media_group_id].cancel()
+    album_timers[chat_id][media_group_id] = asyncio.create_task(
+        wait_and_send(chat_id, media_group_id, msg, delay)
+    )
 
 
-async def schedule_album_send(album_key: str, delay: int = 5):
-    if album_key in album_timers:
-        album_timers[album_key].cancel()
-    album_timers[album_key] = asyncio.create_task(wait_and_send(album_key, delay))
-
-
-async def wait_and_send(album_key: str, delay: int):
+async def wait_and_send(chat_id: int, media_group_id, msg, delay):
     await asyncio.sleep(delay)
-    await send_album(album_key)
-    album_timers.pop(album_key, None)
+    await send_album(chat_id, media_group_id, msg)
+    album_timers[chat_id].pop(media_group_id, None)
 
 
-# Очистка старых альбомов и отправка
-async def send_album(album_key: str):
-    items = media_buffer.pop(album_key, [])
+# Очистка старых альбомов
+async def send_album(chat_id: int, media_group_id, msg: Message):
+
+    cleanup_old_albums()
+
+    items = media_buffer.get(chat_id, {}).pop(media_group_id, [])
     if not items:
         return
 
-    msg = items[0][3]  # Берём первый объект Message для bot
     for i in range(0, len(items), MEDIA_GROUP_LIMIT):
         chunk = items[i:i + MEDIA_GROUP_LIMIT]
         media = []
-        for j, (file_type, file_id, caption, msg_item, is_document) in enumerate(chunk):
+        for j, (file_type, file_id, caption,
+                msg_item, is_document) in enumerate(chunk):
             if caption and caption.strip():
                 cap = make_caption(msg_item.from_user, caption)
             else:
@@ -179,9 +192,13 @@ async def send_album(album_key: str):
                     cap = None
 
             if file_type == "photo":
-                media.append(InputMediaPhoto(media=file_id, caption=cap) if not is_document else InputMediaDocument(media=file_id, caption=cap))
+                media.append(InputMediaPhoto(media=file_id, caption=cap)
+                             if not is_document else
+                             InputMediaDocument(media=file_id, caption=cap))
             elif file_type == "video":
-                media.append(InputMediaVideo(media=file_id, caption=cap) if not is_document else InputMediaDocument(media=file_id, caption=cap))
+                media.append(InputMediaVideo(media=file_id, caption=cap)
+                             if not is_document else
+                             InputMediaDocument(media=file_id, caption=cap))
 
         try:
             await msg.bot.send_media_group(CHAT_ID, media=media)
@@ -190,21 +207,31 @@ async def send_album(album_key: str):
             await asyncio.sleep(e.retry_after)
         except Exception as e:
             logger.error(f"Ошибка при пересылке альбома: {e}")
-            break
+            try:
+                await msg.reply("❌ Ошибка при отправке альбома. Сообщения не отправлены.")
+            except Exception as err:
+                logger.warning(f"Не удалось уведомить пользователя об ошибке: {err}")
+            return  # <-- теперь return, чтобы не отправлять сообщение об успехе
 
     await msg.reply(f"✅ Альбом ({len(items)} шт.) успешно отправлен!")
-    logger.info(f"Альбом ({len(items)} шт.) от {msg.from_user.full_name} → {CHAT_ID}")
+    logger.info(
+        f"Альбом ({len(items)} шт.) от {msg.from_user.full_name} "
+        f"({msg.from_user.id}) → {CHAT_ID}")
 
 
 def cleanup_old_albums(ttl_seconds: int = 120):
     now = datetime.now()
-    for album_key, items in list(media_buffer.items()):
-        if not items:
-            continue
-        first_msg_time = datetime.fromtimestamp(items[0][3].date.timestamp())
-        if now - first_msg_time > timedelta(seconds=ttl_seconds):
-            logger.info(f"Очищен старый альбом: album_key={album_key}")
-            media_buffer.pop(album_key, None)
+    for chat_id, groups in list(media_buffer.items()):
+        for media_group_id, items in list(groups.items()):
+            if not items:
+                continue
+            first_msg_time = datetime.fromtimestamp(
+                items[0][3].date.timestamp())
+            if now - first_msg_time > timedelta(seconds=ttl_seconds):
+                logger.info(
+                    f"Очищен старый альбом: chat_id={chat_id}, "
+                    f"media_group_id={media_group_id}")
+                groups.pop(media_group_id, None)
 
 
 @dp.message(Command("start"))
@@ -231,14 +258,18 @@ async def handle_media(msg: Message):
     if msg.text and not is_real_command(msg.text):
         success = await forward_file(
             msg.bot, CHAT_ID, None, None, None, user=msg.from_user,
-            text_message=msg.text
+            text_message=msg.text, msg=msg
         )
         if success:
             await msg.reply("✅ Сообщение успешно отправлено!")
         return
 
-    # Генерация уникального ключа
-    album_key = make_album_key(chat_id, msg.media_group_id, msg.message_id)
+    media_group_id = msg.media_group_id or msg.message_id
+
+    if chat_id not in media_buffer:
+        media_buffer[chat_id] = {}
+    if media_group_id not in media_buffer[chat_id]:
+        media_buffer[chat_id][media_group_id] = []
 
     file_type = None
     file_id = None
@@ -274,23 +305,24 @@ async def handle_media(msg: Message):
             f"Размер вашего файла: {file_size / 1024 / 1024:.1f} МБ\n"
             f"Максимальный размер: {MAX_FILE_SIZE / 1024 / 1024:.0f} МБ"
         )
-        logger.warning(f"Отклонён большой файл: {file_type}, размер {file_size}")
+        logger.warning(
+            f"Отклонён большой файл: {file_type}, размер {file_size}")
         return
 
-    # Добавляем в буфер
-    if album_key not in media_buffer:
-        media_buffer[album_key] = []
-
-    media_buffer[album_key].append(
+    media_buffer[chat_id][media_group_id].append(
         (file_type, file_id, caption, msg, is_document)
     )
 
-    # Планируем отправку
     if msg.media_group_id:
-        await schedule_album_send(album_key)
+        await schedule_album_send(chat_id, media_group_id, msg)
     else:
-        file_type, file_id, caption, msg_item, is_document = media_buffer.pop(album_key)[0]
-        success = await forward_file(msg.bot, CHAT_ID, file_type, file_id, caption, is_document, msg_item.from_user)
+        file_type, file_id, caption, msg_item, is_document = (
+            media_buffer[chat_id].pop(media_group_id)[0]
+        )
+        success = await forward_file(
+            msg.bot, CHAT_ID, file_type,
+            file_id, caption, is_document, msg_item.from_user, msg=msg
+        )
         if success:
             await msg.reply("✅ Файл успешно отправлен!")
 
@@ -304,9 +336,16 @@ async def handle_edit(msg: Message):
                 f"✏️ (Внес исправления)\n\n"
                 f"{make_caption(msg.from_user, msg.text)}"
             )
-            logger.info(f"Редактированное сообщение от {msg.from_user.full_name} → {CHAT_ID}")
+            logger.info(
+                f"Редактированное сообщение от "
+                f"{msg.from_user.full_name} → {CHAT_ID}")
         except Exception as e:
-            logger.error(f"Ошибка при пересылке редактированного сообщения: {e}")
+            logger.error(
+                f"Ошибка при пересылке редактированного сообщения: {e}")
+            try:
+                await msg.reply("❌ Ошибка при пересылке отредактированного сообщения.")
+            except Exception as err:
+                logger.warning(f"Не удалось уведомить пользователя об ошибке: {err}")
 
 
 async def main():
