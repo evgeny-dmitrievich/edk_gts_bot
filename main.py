@@ -94,7 +94,8 @@ async def forward_file(bot: Bot, chat_id: int,
                        file_type: Optional[str], file_id: Optional[str],
                        caption: Optional[str],
                        is_document: bool = False,
-                       user=None, text_message: Optional[str] = None):
+                       user=None, text_message: Optional[str] = None,
+                       msg: Optional[Message] = None):
     # Текстовое сообщение
     if text_message:
         text_to_send = make_caption(user, text_message)
@@ -103,6 +104,9 @@ async def forward_file(bot: Bot, chat_id: int,
             return True
         except Exception as e:
             logger.error(f"Ошибка при пересылке текста: {e}")
+            if msg:
+                await msg.reply("❌ Ошибка при пересылке текста. "
+                                "Сообщение не отправлено.")
             return False
 
     final_caption = make_caption(user, caption)
@@ -132,13 +136,22 @@ async def forward_file(bot: Bot, chat_id: int,
             await asyncio.sleep(e.retry_after)
         except TelegramForbiddenError:
             logger.error("Бот потерял доступ к чату")
-            break
+            if msg:
+                await msg.reply("❌ Бот потерял доступ к целевому чату. "
+                                "Отправка невозможна.")
+            return False
         except TelegramBadRequest as e:
             logger.error(f"Неверный запрос Telegram: {e}")
-            break
+            if msg:
+                await msg.reply("❌ Ошибка при отправке. Возможно, "
+                                "файл повреждён или формат не поддерживается.")
+            return False
         except Exception as e:
             logger.error(f"Ошибка при отправке {file_type}: {e}")
-            break
+            if msg:
+                await msg.reply("❌ Ошибка при пересылке. "
+                                "Сообщение не отправлено.")
+            return False
     return False
 
 
@@ -198,7 +211,13 @@ async def send_album(chat_id: int, media_group_id, msg: Message):
             await asyncio.sleep(e.retry_after)
         except Exception as e:
             logger.error(f"Ошибка при пересылке альбома: {e}")
-            break
+            try:
+                await msg.reply("❌ Ошибка при отправке альбома. "
+                                "Сообщения не отправлены.")
+            except Exception as err:
+                logger.warning(
+                    f"Не удалось уведомить пользователя об ошибке: {err}")
+            return
 
     await msg.reply(f"✅ Альбом ({len(items)} шт.) успешно отправлен!")
     logger.info(
@@ -245,7 +264,7 @@ async def handle_media(msg: Message):
     if msg.text and not is_real_command(msg.text):
         success = await forward_file(
             msg.bot, CHAT_ID, None, None, None, user=msg.from_user,
-            text_message=msg.text
+            text_message=msg.text, msg=msg
         )
         if success:
             await msg.reply("✅ Сообщение успешно отправлено!")
@@ -308,7 +327,7 @@ async def handle_media(msg: Message):
         )
         success = await forward_file(
             msg.bot, CHAT_ID, file_type,
-            file_id, caption, is_document, msg_item.from_user
+            file_id, caption, is_document, msg_item.from_user, msg=msg
         )
         if success:
             await msg.reply("✅ Файл успешно отправлен!")
@@ -329,6 +348,11 @@ async def handle_edit(msg: Message):
         except Exception as e:
             logger.error(
                 f"Ошибка при пересылке редактированного сообщения: {e}")
+            try:
+                await msg.reply("❌ Ошибка при редактировании сообщения.")
+            except Exception as err:
+                logger.warning(
+                    f"Не удалось уведомить пользователя об ошибке: {err}")
 
 
 async def main():
