@@ -85,9 +85,10 @@ def is_allowed_file(file_name: str) -> Optional[str]:
 
 
 def make_caption(user, user_caption: Optional[str] = None) -> str:
-    if user_caption and user_caption.strip():
-        return f"{user_caption.strip()} - от {user.full_name}"
-    return f"Файл от {user.full_name}"
+    base_caption = user_caption.strip() if user_caption and user_caption.strip() else None
+    if base_caption:
+        return f"{base_caption} — от {user.full_name}"
+    return f"🖼️ Фото/Видео от {user.full_name}"
 
 
 async def forward_file(bot: Bot, chat_id: int,
@@ -164,11 +165,17 @@ async def send_album(chat_id: int, media_group_id, msg: Message):
         chunk = items[i:i + MEDIA_GROUP_LIMIT]
         media = []
         for j, (file_type, file_id, caption, msg_item, is_document) in enumerate(chunk):
-            cap = caption or (
-                make_caption(msg_item.from_user)
-                if (not is_document and j == 0) or (is_document and j == len(chunk) - 1)
-                else None
-            )
+            if caption:
+                # Если пользователь написал подпись, добавляем — от пользователя
+                cap = make_caption(msg_item.from_user, caption)
+            else:
+                # Для альбома: подпись на первый фото/видео или на последний документ
+                if file_type in ("photo", "video"):
+                    cap = make_caption(msg_item.from_user) if j == 0 else None
+                elif is_document:
+                    cap = make_caption(msg_item.from_user) if j == len(chunk) - 1 else None
+                else:
+                    cap = None
 
             if file_type == "photo":
                 media.append(InputMediaPhoto(media=file_id, caption=cap)
